@@ -47,17 +47,21 @@ export default function (pi: ExtensionAPI) {
   // ── Capture SAIA rate-limit headers & show via setStatus ────────────────
   pi.on("after_provider_response", (event, ctx) => {
     const h = event.headers;
+    console.log("[prime-agent-saia] after_provider_response status=" + event.status + " headers=" + typeof h + " keys=" + (h ? Object.keys(h).join(",") : "null"));
+
     if (!h) return;
     const get = (k: string): string | null => {
       if (typeof (h as Headers).get === "function") return (h as Headers).get(k);
-      return (h as Record<string, string>)[k] ?? null;
+      const v = (h as Record<string, string>)[k];
+      return v != null ? String(v) : null;
     };
     const minute = get("x-ratelimit-remaining-minute");
     const hour   = get("x-ratelimit-remaining-hour");
+    console.log("[prime-agent-saia] headers minute=" + minute + " hour=" + hour);
     if (!minute && !hour) return;
-    ctx.ui.setStatus(
-      "saia-limits",
-      [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ")
-    );
+
+    const text = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
+    console.log("[prime-agent-saia] setting status to:", text);
+    ctx.ui.setStatus("saia-limits", text);
   });
 }
