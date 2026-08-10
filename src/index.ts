@@ -18,9 +18,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── Qwen system-message merger ──────────────────────────────────────────
   pi.on("before_provider_request", (event, ctx) => {
-    // ctx.model.provider is the provider name, NOT event.payload (raw API body).
     if (ctx.model?.provider !== "saia") return;
-    const modelId = ctx.model?.id ?? event.payload?.model;
+    const modelId = ctx.model?.id ?? String(event.payload?.model ?? "");
     if (!modelId || typeof modelId !== "string" || !STRICT_QWEN.test(modelId)) return;
 
     const messages = event.payload?.messages;
