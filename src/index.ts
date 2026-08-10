@@ -1,13 +1,16 @@
 // prime-agent-saia: SAIA model fixes for Prime Agent
+//
 // Fixes: (1) developer->system role for Qwen 3.5/3.6 on SAIA
-//        (2) shows SAIA rate-limit headers in footer status bar
+//        (2) shows SAIA rate-limit headers in the footer
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
+let saiaLimitsCache = "";
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v8 loaded");
+  console.log("[prime-agent-saia] v9 loaded");
 
   // Fix developer -> system role for SAIA Qwen models
   pi.on("before_provider_request", (event, ctx) => {
@@ -21,15 +24,48 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Capture SAIA rate-limit headers and show via setStatus
-  pi.on("after_provider_response", (event, ctx) => {
+  // Capture SAIA rate-limit headers
+  pi.on("after_provider_response", (event, _ctx) => {
     const h = event.headers;
     if (!h) return;
     const get = (k) => typeof h.get === "function" ? h.get(k) : h[k];
     const minute = get("x-ratelimit-remaining-minute");
     const hour   = get("x-ratelimit-remaining-hour");
     if (!minute && !hour) return;
-    const text = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
-    ctx.ui.setStatus("saia", text);
+    saiaLimitsCache = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
+  });
+
+  // Custom footer: SAIA limits + model + token counts
+  pi.on("session_start", async (_event, ctx) => {
+    ctx.ui.setFooter((tui, theme, footerData) => {
+      const unsub = footerData.onBranchChange(() => tui.requestRender());
+      return {
+        dispose: unsub,
+        invalidate() {},
+        render(width: number): string[] {
+          let input = 0, output = 0;
+          for (const e of ctx.sessionManager.getBranch()) {
+            if (e.type === "message" && e.message?.role === "assistant" && e.message?.usage) {
+              input  += e.message.usage.input  || 0;
+              output += e.message.usage.output || 0;
+            }
+          }
+          const fmt = (n) => n < 1000 ? n : (n / 1000).toFixed(1) + "k";
+          const model = ctx.model?.id || "";
+          const modelShort = model.length > 30 ? model.slice(0, 27) + "..." : model;
+
+          // Left: SAIA limits if available
+          let left = "";
+          if (saiaLimitsCache) {
+            left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
+          }
+          // Right: model + tokens
+          const right = theme.fg("dim", modelShort + "  ↑" + fmt(input) + " ↓" + fmt(output));
+
+          const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
+          return [truncateToWidth(left + pad + right, width)];
+        },
+      };
+    });
   });
 }
