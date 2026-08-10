@@ -14,7 +14,7 @@ let saiaLimitsCache = "";
 export default function (pi: ExtensionAPI) {
   console.log("[prime-agent-saia] v7 loaded");
 
-  // ── Fix: rewrite developer role to system for SAIA Qwen models ----------
+  // Fix: rewrite developer role to system for SAIA Qwen models
   pi.on("before_provider_request", (event, ctx) => {
     const provider = ctx.model?.provider;
     const modelId = ctx.model?.id ?? String(event.payload?.model ?? "");
@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── Capture SAIA rate-limit headers --------------------------------------
+  // Capture SAIA rate-limit headers
   pi.on("after_provider_response", (event, _ctx) => {
     const h = event.headers;
     if (!h) return;
@@ -37,7 +37,7 @@ export default function (pi: ExtensionAPI) {
     saiaLimitsCache = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
   });
 
-  // ── Custom footer: SAIA limits (left) + model + tokens (right) -----------
+  // Custom footer: SAIA limits (left) + model + token counts (right)
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setFooter((tui, theme, footerData) => {
       const unsub = footerData.onBranchChange(() => tui.requestRender());
@@ -45,7 +45,6 @@ export default function (pi: ExtensionAPI) {
         dispose: unsub,
         invalidate() {},
         render(width: number): string[] {
-          // Simple token counts from session
           let input = 0, output = 0;
           for (const e of ctx.sessionManager.getBranch()) {
             if (e.type === "message" && e.message?.role === "assistant" && e.message?.usage) {
@@ -57,27 +56,18 @@ export default function (pi: ExtensionAPI) {
           const model = ctx.model?.id || "";
           const modelShort = model.length > 30 ? model.slice(0, 27) + "..." : model;
 
-          // Left: SAIA limits
           let left = "";
           if (saiaLimitsCache) {
             left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
           }
-
-          // Right: model + token counts
           const right = theme.fg("dim", modelShort + "  \u2191" + fmt(input) + " \u2193" + fmt(output));
 
-          // Simple padding
-          const leftLen = visibleWidth(left);
-          const rightLen = visibleWidth(right);
+          const leftLen = left.replace(/\x1b\[\d+m/g, "").length;
+          const rightLen = right.replace(/\x1b\[\d+m/g, "").length;
           const pad = " ".repeat(Math.max(1, width - leftLen - rightLen));
           return [left + pad + right];
         },
       };
     });
   });
-}
-
-function visibleWidth(s) {
-  // Approximate visible width (exclude ANSI escape sequences)
-  return s.replace(/\x1b\[\d+m/g, "").length;
 }
