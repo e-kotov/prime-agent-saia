@@ -4,19 +4,17 @@
 //    Qwen 3.5/3.6 models. Fixes HTTP 400 "Unexpected message role."
 //
 // 2. SAIA rate-limit display — reads x-ratelimit-remaining-* headers from
-//    SAIA API responses and shows them in the footer next to token stats.
+//    SAIA API responses and shows them in the footer.
 
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 let saiaLimitsCache = "";
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v6 loaded");
+  console.log("[prime-agent-saia] v7 loaded");
 
-  // ── Fix: rewrite developer role to system for SAIA Qwen models --------
+  // ── Fix: rewrite developer role to system for SAIA Qwen models ----------
   pi.on("before_provider_request", (event, ctx) => {
     const provider = ctx.model?.provider;
     const modelId = ctx.model?.id ?? String(event.payload?.model ?? "");
@@ -28,7 +26,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── Capture SAIA rate-limit headers -----------------------------------
+  // ── Capture SAIA rate-limit headers --------------------------------------
   pi.on("after_provider_response", (event, _ctx) => {
     const h = event.headers;
     if (!h) return;
@@ -39,44 +37,47 @@ export default function (pi: ExtensionAPI) {
     saiaLimitsCache = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
   });
 
-  // ── Custom footer: SAIA limits (left) + token stats (right) -----------
+  // ── Custom footer: SAIA limits (left) + model + tokens (right) -----------
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setFooter((tui, theme, footerData) => {
       const unsub = footerData.onBranchChange(() => tui.requestRender());
-
       return {
         dispose: unsub,
         invalidate() {},
         render(width: number): string[] {
-          // Token/cost stats (same as default footer)
-          let input = 0, output = 0, cost = 0;
+          // Simple token counts from session
+          let input = 0, output = 0;
           for (const e of ctx.sessionManager.getBranch()) {
-            if (e.type === "message" && e.message.role === "assistant") {
-              const m = e.message as AssistantMessage;
-              input  += m.usage.input;
-              output += m.usage.output;
-              cost   += m.usage.cost.total;
+            if (e.type === "message" && e.message?.role === "assistant" && e.message?.usage) {
+              input  += e.message.usage.input  || 0;
+              output += e.message.usage.output || 0;
             }
           }
-          const fmt = (n) => (n < 1000 ? n : (n / 1000).toFixed(1) + "k");
+          const fmt = (n) => n < 1000 ? n : (n / 1000).toFixed(1) + "k";
+          const model = ctx.model?.id || "";
+          const modelShort = model.length > 30 ? model.slice(0, 27) + "..." : model;
 
-          // Left: SAIA limits if available
+          // Left: SAIA limits
           let left = "";
           if (saiaLimitsCache) {
-            left = theme.fg("dim", "SAIA " + saiaLimitsCache + " ");
+            left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
           }
-          // Right: model + tokens + cost
-          const right = theme.fg(
-            "dim",
-            (ctx.model?.id || "no-model") +
-              "  ↑" + fmt(input) + " ↓" + fmt(output) +
-              " $" + cost.toFixed(3)
-          );
 
-          const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-          return [truncateToWidth(left + pad + right, width)];
+          // Right: model + token counts
+          const right = theme.fg("dim", modelShort + "  \u2191" + fmt(input) + " \u2193" + fmt(output));
+
+          // Simple padding
+          const leftLen = visibleWidth(left);
+          const rightLen = visibleWidth(right);
+          const pad = " ".repeat(Math.max(1, width - leftLen - rightLen));
+          return [left + pad + right];
         },
       };
     });
   });
+}
+
+function visibleWidth(s) {
+  // Approximate visible width (exclude ANSI escape sequences)
+  return s.replace(/\x1b\[\d+m/g, "").length;
 }
