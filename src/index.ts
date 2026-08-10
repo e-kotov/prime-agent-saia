@@ -1,61 +1,44 @@
-// prime-agent-saia: SAIA model fixes for Prime Agent
-//
-// 1. Qwen system-message merger — merges multiple system message fragments
-//    into one for Qwen 3.5/3.6 models on SAIA. Fixes HTTP 400
-//    "Unexpected message role."
-//
-// 2. SAIA rate-limit display — reads x-ratelimit-remaining-* headers from
-//    SAIA API responses and shows remaining requests via setStatus in the
-//    footer status bar.
-
+// prime-agent-saia: Qwen system-message merger + rate-limit display
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// Matches Qwen 3.5.x and 3.6.x model IDs (the strict ones on SAIA).
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] Extension loaded");
+  console.log("[prime-agent-saia] v3 loaded");
 
-  // ── Qwen system-message merger ──────────────────────────────────────────
-  pi.on("before_provider_request", (event, ctx) => {
+  // Log context event structure for debugging
+  pi.on("context", (event, ctx) => {
     if (ctx.model?.provider !== "saia") return;
-    const modelId = ctx.model?.id ?? String(event.payload?.model ?? "");
-    if (!modelId || typeof modelId !== "string" || !STRICT_QWEN.test(modelId)) return;
+    console.log("[prime-agent-saia] context for", ctx.model?.id);
 
-    const messages = event.payload?.messages;
-    if (!messages || !Array.isArray(messages)) return;
-
-    const systemMsgs = messages.filter((m) => m.role === "system");
-    if (systemMsgs.length <= 1) return;
-
-    const merged = systemMsgs.map((m) => m.content ?? "").join("\n\n");
-    event.payload = {
-      ...event.payload,
-      messages: [
-        { role: "system", content: merged },
-        ...messages.filter((m) => m.role !== "system"),
-      ],
-    };
+    // Print the roles of all messages to understand the format
+    const roles = event.messages.map(m => JSON.stringify(m.role)).join(", ");
+    console.log("[prime-agent-saia] roles:", roles.substring(0, 500));
   });
 
-  // ── Capture SAIA rate-limit headers & show via setStatus ────────────────
+  // Log the before_provider_request payload structure
+  pi.on("before_provider_request", (event, ctx) => {
+    if (ctx.model?.provider !== "saia") return;
+    const keys = event.payload ? Object.keys(event.payload).join(", ") : "NO PAYLOAD";
+    console.log("[prime-agent-saia] before_provider_request payload keys:", keys);
+    console.log("[prime-agent-saia] model =", JSON.stringify(event.payload?.model));
+    if (event.payload?.messages) {
+      const msgRoles = event.payload.messages.map(m => m.role).join(", ");
+      console.log("[prime-agent-saia] message roles:", msgRoles);
+    }
+  });
+
+  // Rate-limit display
   pi.on("after_provider_response", (event, ctx) => {
     const h = event.headers;
     if (!h) return;
-
-    const get = (k: string): string | null => {
-      if (typeof (h as Headers).get === "function") return (h as Headers).get(k);
-      const v = (h as Record<string, string>)[k];
-      return v != null ? String(v) : null;
-    };
-
+    const get = (k) => typeof h.get === "function" ? h.get(k) : h[k];
     const minute = get("x-ratelimit-remaining-minute");
-    const hour   = get("x-ratelimit-remaining-hour");
-    if (minute === null && hour === null) return;
-
-    const parts: string[] = [];
-    if (minute !== null) parts.push(`${minute}/m`);
-    if (hour   !== null) parts.push(`${hour}/h`);
+    const hour = get("x-ratelimit-remaining-hour");
+    if (!minute && !hour) return;
+    const parts = [];
+    if (minute) parts.push(minute + "/m");
+    if (hour) parts.push(hour + "/h");
     ctx.ui.setStatus("saia-limits", parts.join(" "));
   });
 }
