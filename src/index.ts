@@ -1,63 +1,63 @@
-// prime-agent-saia: Qwen system-message merger + rate-limit display
+// prime-agent-saia: SAIA model fixes for Prime Agent
+//
+// 1. Qwen system-role fix — SAIA's vLLM for Qwen 3.5/3.6 does NOT support
+//    the "developer" role. Prime Agent sends it for reasoning models because
+//    compat.supportsDeveloperRole is true for SAIA. This extension rewrites
+//    "developer" back to "system" for SAIA Qwen models, fixing HTTP 400
+//    "Unexpected message role."
+//
+// 2. SAIA rate-limit display — reads x-ratelimit-remaining-* headers from
+//    SAIA API responses and shows remaining requests via setStatus.
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v4 loaded");
+  console.log("[prime-agent-saia] v5 loaded");
 
-  // Log ALL before_provider_request events regardless of provider
+  // ── Fix: rewrite developer role → system for SAIA Qwen models ──────────
   pi.on("before_provider_request", (event, ctx) => {
-    const provider = ctx.model?.provider ?? "UNDEFINED";
-    const modelId = ctx.model?.id ?? "UNDEFINED";
-    const pk = event.payload ? Object.keys(event.payload).join(",") : "NO-PAYLOAD";
-    console.log(
-      "[prime-agent-saia] onPayload provider=" + provider +
-      " model=" + modelId +
-      " keys=" + pk
-    );
+    const provider = ctx.model?.provider;
+    const modelId = ctx.model?.id ?? String(event.payload?.model ?? "");
+    if (provider !== "saia" || !STRICT_QWEN.test(modelId)) return;
 
-    // Only process SAIA Qwen
-    if (provider !== "saia") return;
-    const qwenModel = modelId ?? String(event.payload?.model ?? "");
-    if (!STRICT_QWEN.test(qwenModel)) return;
-
-    // Merge system messages
     const msgs = event.payload?.messages;
     if (!msgs || !Array.isArray(msgs)) return;
-    const sysMsgs = msgs.filter(m => m.role === "system");
-    console.log("[prime-agent-saia] Qwen system messages:", sysMsgs.length);
 
-    if (sysMsgs.length <= 1) return;
-    const merged = sysMsgs.map(m => m.content ?? "").join("\n\n");
-    event.payload = {
-      ...event.payload,
-      messages: [
-        { role: "system", content: merged },
-        ...msgs.filter(m => m.role !== "system"),
-      ],
-    };
-    console.log("[prime-agent-saia] MERGED " + sysMsgs.length + " system messages");
+    // If the first message has role "developer", rewrite to "system"
+    // This is what SAIA's vLLM for Qwen 3.5/3.6 expects.
+    // Debug: log the roles before fix
+    const roles = msgs.map(m => JSON.stringify(m.role)).join(", ");
+    console.log("[prime-agent-saia] Qwen payload roles:", roles);
+
+    let changed = false;
+    for (const m of msgs) {
+      if (m.role === "developer") {
+        m.role = "system";
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      console.log("[prime-agent-saia] Rewrote developer -> system for", modelId);
+    }
   });
 
-  // Log context events too
-  pi.on("context", (event, ctx) => {
-    console.log(
-      "[prime-agent-saia] context provider=" + (ctx.model?.provider ?? "UNDEF") +
-      " model=" + (ctx.model?.id ?? "UNDEF") +
-      " msgs=" + event.messages.length
-    );
-  });
-
-  // Rate-limit display
+  // ── Capture SAIA rate-limit headers & show via setStatus ────────────────
   pi.on("after_provider_response", (event, ctx) => {
-    console.log("[prime-agent-saia] onResponse status=" + event.status);
     const h = event.headers;
     if (!h) return;
-    const get = (k) => typeof h.get === "function" ? h.get(k) : h[k];
+    const get = (k: string): string | null => {
+      if (typeof (h as Headers).get === "function") return (h as Headers).get(k);
+      return (h as Record<string, string>)[k] ?? null;
+    };
     const minute = get("x-ratelimit-remaining-minute");
-    const hour = get("x-ratelimit-remaining-hour");
+    const hour   = get("x-ratelimit-remaining-hour");
     if (!minute && !hour) return;
-    ctx.ui.setStatus("saia-limits", [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" "));
+    ctx.ui.setStatus(
+      "saia-limits",
+      [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ")
+    );
   });
 }
