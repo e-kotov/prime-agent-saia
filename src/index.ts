@@ -8,31 +8,25 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 const RATE_LIMIT_WIDGET = "prime-agent-saia-rate-limits";
-let saiaLimits: { minute?: string; hour?: string } = {};
+let saiaLimitsCache = "awaiting first SAIA response";
 
 function readHeader(headers: any, name: string): string | undefined {
   const value = typeof headers?.get === "function" ? headers.get(name) : headers?.[name];
   return value == null || value === "" ? undefined : String(value);
 }
 
-function rateLimitPlainLine(): string {
-  const parts = [
-    saiaLimits.minute && `${saiaLimits.minute} requests left this minute`,
-    saiaLimits.hour && `${saiaLimits.hour} requests left this hour`,
-  ].filter(Boolean);
-  return parts.length > 0 ? `SAIA quota  •  ${parts.join("  •  ")}` : "SAIA quota  •  waiting for the first response";
+function rateLimitLine(): string {
+  return `SAIA rate limits: ${saiaLimitsCache}`;
 }
 
 function showRateLimits(ctx: any): void {
-  // Static string-array widgets are the only extension surface forwarded from
-  // daemon workers to the terminal client. Keep the payload deliberately plain
-  // so it remains safe across that bridge.
-  ctx.ui.setWidget(RATE_LIMIT_WIDGET, [rateLimitPlainLine()], { placement: "aboveEditor" });
-  console.log("[prime-agent-saia] rate-limit widget sent to UI");
+  // Array widgets are forwarded from daemon workers to the interactive client.
+  // Custom footer components are intentionally a no-op in daemon/RPC mode.
+  ctx.ui.setWidget(RATE_LIMIT_WIDGET, [rateLimitLine()], { placement: "aboveEditor" });
 }
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v24 loaded (plain daemon-safe rate-limit widget)");
+  console.log("[prime-agent-saia] v21 loaded (daemon-safe rate-limit widget)");
 
   // SAIA's Qwen 3.5/3.6 endpoint does not accept the OpenAI `developer` role.
   pi.on("before_provider_request", (event, ctx) => {
@@ -50,8 +44,11 @@ export default function (pi: ExtensionAPI) {
     const hour = readHeader(event.headers, "x-ratelimit-remaining-hour");
     if (!minute && !hour) return;
 
-    saiaLimits = { minute, hour };
-    console.log(`[prime-agent-saia] ${rateLimitPlainLine()}`);
+    saiaLimitsCache = [
+      minute && `${minute}/min`,
+      hour && `${hour}/hour`,
+    ].filter(Boolean).join("  ");
+    console.log(`[prime-agent-saia] rate limits: ${saiaLimitsCache}`);
     showRateLimits(ctx);
   });
 
@@ -64,7 +61,7 @@ export default function (pi: ExtensionAPI) {
     description: "Show the latest SAIA rate limits above the editor",
     handler: async (_args, ctx) => {
       showRateLimits(ctx);
-      ctx.ui.notify(rateLimitPlainLine(), "info");
+      ctx.ui.notify(rateLimitLine(), "info");
     },
   });
 }
