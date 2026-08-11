@@ -1,17 +1,16 @@
 // prime-agent-saia: SAIA model fixes for Prime Agent
 //
 // Fixes: (1) developer->system role for Qwen 3.5/3.6 on SAIA
-//        (2) shows SAIA rate-limit headers in the footer
+//        (2) /limits command to test footer
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 let saiaLimitsCache = "";
-let requestRender = () => {};
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v10 loaded");
+  console.log("[prime-agent-saia] loaded");
 
   // Fix developer -> system role for SAIA Qwen models
   pi.on("before_provider_request", (event, ctx) => {
@@ -25,7 +24,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Capture SAIA rate-limit headers and re-render footer
+  // Capture SAIA rate-limit headers
   pi.on("after_provider_response", (event, _ctx) => {
     const h = event.headers;
     if (!h) return;
@@ -34,39 +33,40 @@ export default function (pi: ExtensionAPI) {
     const hour   = get("x-ratelimit-remaining-hour");
     if (!minute && !hour) return;
     saiaLimitsCache = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
-    requestRender();
   });
 
-  // Custom footer: SAIA limits + model + token counts
-  pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.setFooter((tui, theme, footerData) => {
-      requestRender = () => tui.requestRender();
-      const unsub = footerData.onBranchChange(() => tui.requestRender());
-      return {
-        dispose: unsub,
-        invalidate() {},
-        render(width: number): string[] {
-          let input = 0, output = 0;
-          for (const e of ctx.sessionManager.getBranch()) {
-            if (e.type === "message" && e.message?.role === "assistant" && e.message?.usage) {
-              input  += e.message.usage.input  || 0;
-              output += e.message.usage.output || 0;
+  // /limits command: show SAIA limits in footer
+  pi.registerCommand("limits", {
+    description: "Toggle SAIA rate-limit footer",
+    handler: async (_args, ctx) => {
+      ctx.ui.setFooter((tui, theme, footerData) => {
+        const unsub = footerData.onBranchChange(() => tui.requestRender());
+        return {
+          dispose: unsub,
+          invalidate() {},
+          render(width: number): string[] {
+            let input = 0, output = 0;
+            for (const e of ctx.sessionManager.getBranch()) {
+              if (e.type === "message" && e.message?.role === "assistant" && e.message?.usage) {
+                input  += e.message.usage.input  || 0;
+                output += e.message.usage.output || 0;
+              }
             }
-          }
-          const fmt = (n) => n < 1000 ? n : (n / 1000).toFixed(1) + "k";
-          const model = ctx.model?.id || "";
-          const modelShort = model.length > 30 ? model.slice(0, 27) + "..." : model;
+            const fmt = (n) => n < 1000 ? n : (n / 1000).toFixed(1) + "k";
+            const model = ctx.model?.id || "";
 
-          let left = "";
-          if (saiaLimitsCache) {
-            left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
-          }
-          const right = theme.fg("dim", modelShort + "  \u2191" + fmt(input) + " \u2193" + fmt(output));
+            let left = "";
+            if (saiaLimitsCache) {
+              left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
+            }
+            const right = theme.fg("dim", model + "  \u2191" + fmt(input) + " \u2193" + fmt(output));
 
-          const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-          return [truncateToWidth(left + pad + right, width)];
-        },
-      };
-    });
+            const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
+            return [truncateToWidth(left + pad + right, width)];
+          },
+        };
+      });
+      ctx.ui.notify("SAIA limits footer enabled", "info");
+    },
   });
 }
