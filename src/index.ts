@@ -10,7 +10,7 @@ let saiaLimitsCache = "";
 let activeTui: any = null;
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v19 loaded");
+  console.log("[prime-agent-saia] v20 loaded");
 
   // Fix developer -> system role for SAIA Qwen models
   pi.on("before_provider_request", (event, ctx) => {
@@ -62,7 +62,7 @@ export default function (pi: ExtensionAPI) {
           const modelShort = model.length > 30 ? model.slice(0, 27) + "..." : model;
           let left = "";
           if (saiaLimitsCache) {
-            left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
+            left = theme.fg("cyan", "SAIA " + saiaLimitsCache + "  ");
           }
           const right = theme.fg("dim", modelShort + "  \u2191" + fmt(inputTokens) + " \u2193" + fmt(outputTokens));
           const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
@@ -71,5 +71,6 @@ export default function (pi: ExtensionAPI) {
       };
     });
     console.log("[prime-agent-saia] custom footer set");
+    ctx.ui.notify("SAIA footer active - check bottom line", "info");
   });
 }
