@@ -16,9 +16,9 @@ role. The extension changes only that role to `system` for matching SAIA models.
 Prime Agent sessions run extensions in a daemon worker. In that mode the
 `setFooter()` component API is deliberately a no-op and cannot reach the
 terminal client. `setWidget(..., { placement: "aboveEditor" })` is forwarded,
-so the latest `x-ratelimit-remaining-minute` and
-`x-ratelimit-remaining-hour` headers are displayed persistently immediately
-above the editor. Run `/saia-limits` to re-show the latest value.
+so the latest remaining and total limit headers are displayed immediately
+above the editor, for example: `SAIA quota | minute: 29/30 requests left |
+hour: 199/200 requests left`. Run `/saia-limits` to re-show the latest value.
 
 ## Installation
 

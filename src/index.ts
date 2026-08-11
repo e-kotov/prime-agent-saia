@@ -16,7 +16,12 @@ function readHeader(headers: any, name: string): string | undefined {
 }
 
 function rateLimitLine(): string {
-  return `SAIA rate limits: ${saiaLimitsCache}`;
+  return `SAIA quota | ${saiaLimitsCache}`;
+}
+
+function formatQuotaWindow(name: string, remaining: string | undefined, limit: string | undefined): string | undefined {
+  if (!remaining) return undefined;
+  return limit ? `${name}: ${remaining}/${limit} requests left` : `${name}: ${remaining} requests left`;
 }
 
 function showRateLimits(ctx: any): void {
@@ -26,7 +31,7 @@ function showRateLimits(ctx: any): void {
 }
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v21 loaded (daemon-safe rate-limit widget)");
+  console.log("[prime-agent-saia] v25 loaded (clear SAIA quota widget)");
 
   // SAIA's Qwen 3.5/3.6 endpoint does not accept the OpenAI `developer` role.
   pi.on("before_provider_request", (event, ctx) => {
@@ -42,12 +47,14 @@ export default function (pi: ExtensionAPI) {
   pi.on("after_provider_response", (event, ctx) => {
     const minute = readHeader(event.headers, "x-ratelimit-remaining-minute");
     const hour = readHeader(event.headers, "x-ratelimit-remaining-hour");
+    const minuteLimit = readHeader(event.headers, "x-ratelimit-limit-minute");
+    const hourLimit = readHeader(event.headers, "x-ratelimit-limit-hour");
     if (!minute && !hour) return;
 
     saiaLimitsCache = [
-      minute && `${minute}/min`,
-      hour && `${hour}/hour`,
-    ].filter(Boolean).join("  ");
+      formatQuotaWindow("minute", minute, minuteLimit),
+      formatQuotaWindow("hour", hour, hourLimit),
+    ].filter(Boolean).join(" | ");
     console.log(`[prime-agent-saia] rate limits: ${saiaLimitsCache}`);
     showRateLimits(ctx);
   });
