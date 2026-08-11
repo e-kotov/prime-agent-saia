@@ -6,15 +6,19 @@ Prime Agent extensions for SAIA (GWDG Chat AI) models.
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | **Qwen system-message merger** — merges multiple system message fragments into one for Qwen 3.5/3.6 models on SAIA. Fixes HTTP 400 `"Unexpected message role."` |
+| `src/index.ts` | Rewrites `developer` to `system` for SAIA Qwen 3.5/3.6 and shows SAIA response rate limits above the editor. |
 
 ## How it works
 
-SAIA's vLLM backend for Qwen 3.5 and Qwen 3.6 models requires exactly one
-leading `system` message. Prime Agent's system prompt is built from several
-fragments (base prompt, harness memories/skills, tool definitions, etc.) and
-fragments can end up as separate messages. This extension intercepts the
-provider request payload and merges all `system`-role messages into one.
+SAIA's Qwen 3.5 and Qwen 3.6 endpoints reject the OpenAI `developer` message
+role. The extension changes only that role to `system` for matching SAIA models.
+
+Prime Agent sessions run extensions in a daemon worker. In that mode the
+`setFooter()` component API is deliberately a no-op and cannot reach the
+terminal client. `setWidget(..., { placement: "aboveEditor" })` is forwarded,
+so the latest `x-ratelimit-remaining-minute` and
+`x-ratelimit-remaining-hour` headers are displayed persistently immediately
+above the editor. Run `/saia-limits` to re-show the latest value.
 
 ## Installation
 
