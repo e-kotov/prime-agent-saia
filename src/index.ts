@@ -8,9 +8,10 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 let saiaLimitsCache = "";
+let requestRender = () => {};
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v9 loaded");
+  console.log("[prime-agent-saia] v10 loaded");
 
   // Fix developer -> system role for SAIA Qwen models
   pi.on("before_provider_request", (event, ctx) => {
@@ -24,7 +25,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Capture SAIA rate-limit headers
+  // Capture SAIA rate-limit headers and re-render footer
   pi.on("after_provider_response", (event, _ctx) => {
     const h = event.headers;
     if (!h) return;
@@ -33,11 +34,13 @@ export default function (pi: ExtensionAPI) {
     const hour   = get("x-ratelimit-remaining-hour");
     if (!minute && !hour) return;
     saiaLimitsCache = [minute && minute + "/m", hour && hour + "/h"].filter(Boolean).join(" ");
+    requestRender();
   });
 
   // Custom footer: SAIA limits + model + token counts
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setFooter((tui, theme, footerData) => {
+      requestRender = () => tui.requestRender();
       const unsub = footerData.onBranchChange(() => tui.requestRender());
       return {
         dispose: unsub,
@@ -54,13 +57,11 @@ export default function (pi: ExtensionAPI) {
           const model = ctx.model?.id || "";
           const modelShort = model.length > 30 ? model.slice(0, 27) + "..." : model;
 
-          // Left: SAIA limits if available
           let left = "";
           if (saiaLimitsCache) {
             left = theme.fg("dim", "SAIA " + saiaLimitsCache + "  ");
           }
-          // Right: model + tokens
-          const right = theme.fg("dim", modelShort + "  ↑" + fmt(input) + " ↓" + fmt(output));
+          const right = theme.fg("dim", modelShort + "  \u2191" + fmt(input) + " \u2193" + fmt(output));
 
           const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
           return [truncateToWidth(left + pad + right, width)];
