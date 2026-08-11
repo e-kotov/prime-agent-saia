@@ -23,31 +23,16 @@ function rateLimitPlainLine(): string {
   return parts.length > 0 ? `SAIA quota  •  ${parts.join("  •  ")}` : "SAIA quota  •  waiting for the first response";
 }
 
-function rateLimitLine(ctx: any): string {
-  // Some daemon workers expose the UI bridge without a live Theme instance.
-  // Never let presentation prevent the rate-limit widget from being sent.
-  const theme = ctx.ui?.theme;
-  if (typeof theme?.fg !== "function" || typeof theme?.bold !== "function") {
-    return rateLimitPlainLine();
-  }
-  const separator = theme.fg("dim", "  •  ");
-  const parts = [
-    saiaLimits.minute && `${theme.fg("accent", saiaLimits.minute)} ${theme.fg("muted", "requests left this minute")}`,
-    saiaLimits.hour && `${theme.fg("accent", saiaLimits.hour)} ${theme.fg("muted", "requests left this hour")}`,
-  ].filter(Boolean);
-  const value = parts.length > 0 ? parts.join(separator) : theme.fg("muted", "waiting for the first response");
-  return `${theme.bold("SAIA quota")}${separator}${value}`;
-}
-
 function showRateLimits(ctx: any): void {
-  // Array widgets are forwarded from daemon workers to the interactive client.
-  // Custom footer components are intentionally a no-op in daemon/RPC mode.
-  ctx.ui.setWidget(RATE_LIMIT_WIDGET, [rateLimitLine(ctx)], { placement: "aboveEditor" });
+  // Static string-array widgets are the only extension surface forwarded from
+  // daemon workers to the terminal client. Keep the payload deliberately plain
+  // so it remains safe across that bridge.
+  ctx.ui.setWidget(RATE_LIMIT_WIDGET, [rateLimitPlainLine()], { placement: "aboveEditor" });
   console.log("[prime-agent-saia] rate-limit widget sent to UI");
 }
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v23 loaded (daemon-safe rate-limit widget)");
+  console.log("[prime-agent-saia] v24 loaded (plain daemon-safe rate-limit widget)");
 
   // SAIA's Qwen 3.5/3.6 endpoint does not accept the OpenAI `developer` role.
   pi.on("before_provider_request", (event, ctx) => {
