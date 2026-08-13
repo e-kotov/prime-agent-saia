@@ -255,22 +255,24 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── 3. Track response timing for tokens/sec ──
-  pi.on("turn_start", (event, _ctx) => {
-    turnStartTimestamp = (event as any).timestamp ?? Date.now();
+  pi.on("turn_start", (_event, _ctx) => {
+    turnStartTimestamp = Date.now();
   });
 
   pi.on("message_end", (event, ctx) => {
     try {
       const msg = (event as any).message;
       if (msg?.role !== "assistant") return;
-      const usage = msg.usage;
-      const outputTokens = usage?.output ?? 0;
+      const outputTokens = msg?.usage?.output ?? 0;
       if (outputTokens <= 0) return;
       if (turnStartTimestamp <= 0) return;
-      const elapsedMs = (msg.timestamp ?? Date.now()) - turnStartTimestamp;
+      const elapsedMs = Date.now() - turnStartTimestamp;
       if (elapsedMs <= 0) return;
-      lastTokensPerSec = Math.round((outputTokens / elapsedMs) * 1000);
-      showRateLimits(ctx);
+      const raw = Math.round((outputTokens / elapsedMs) * 1000);
+      // Sanity cap: values over 500 T/s are usually bogus (e.g. cached
+      // responses, timing glitches, or thinking tokens counted before display).
+      lastTokensPerSec = raw > 500 ? 0 : raw;
+      if (lastTokensPerSec > 0) showRateLimits(ctx);
     } catch (err) {
       console.warn(`[prime-agent-saia] message_end error: ${err instanceof Error ? err.message : String(err)}`);
     }
