@@ -56,6 +56,7 @@ function quotaHeader(
 
 const ANSI_YELLOW = "\x1b[33m";
 const ANSI_RED = "\x1b[31m";
+const ANSI_GREEN = "\x1b[32m";
 const ANSI_RESET = "\x1b[39m";
 
 /** Abbreviate numbers >= 1000 (OpenCode style: 15300 → "15.3k"). */
@@ -67,74 +68,64 @@ function formatRemaining(value: string | undefined): string {
   return `${thousands.toFixed(1).replace(/\.0$/, "")}k`;
 }
 
-/** Build an OpenCode-style fragment: "28/m" or "2.9k/mo". */
-function formatField(remaining: string | undefined, unit: string): string | undefined {
-  if (remaining == null) return;
-  return `${formatRemaining(remaining)}/${unit}`;
-}
-
-/** Determine quota status for color coding. */
-function quotaStatus(): "critical" | "warning" | "" {
-  let lowest: { remaining: number; limit?: number } | undefined;
-  for (const key of ["minute", "hour", "day", "month"] as const) {
-    const w = limits[key];
-    if (w.remaining == null) continue;
-    const rem = Number(w.remaining);
-    if (!Number.isFinite(rem)) continue;
-    const lim = w.limit != null ? Number(w.limit) : undefined;
-    if (!lowest || (lowest.limit && lim && lowest.remaining / lowest.limit > rem / lim)) {
-      lowest = { remaining: rem, limit: lim };
-    }
-  }
-  if (!lowest) return "";
-  const pct = lowest.limit ? lowest.remaining / lowest.limit : 0;
-  if (pct <= 0.05 || lowest.remaining < 10) return "critical";
-  if (pct <= 0.20 || lowest.remaining < 100) return "warning";
+/** Determine per-window status for color coding. */
+function windowStatus(remaining: string | undefined, limit: string | undefined): string {
+  if (remaining == null) return "";
+  const rem = Number(remaining);
+  if (!Number.isFinite(rem)) return "";
+  const lim = limit != null ? Number(limit) : undefined;
+  const pct = lim ? rem / lim : 0;
+  if (pct <= 0.05 || rem < 10) return "critical";
+  if (pct <= 0.20 || rem < 100) return "warning";
   return "";
 }
 
-/** Wrap text in ANSI color if status demands it. */
+/** Wrap text in ANSI color. */
 function colorize(text: string, status: string): string {
   if (status === "critical") return `${ANSI_RED}${text}${ANSI_RESET}`;
   if (status === "warning") return `${ANSI_YELLOW}${text}${ANSI_RESET}`;
-  return text;
+  return `${ANSI_GREEN}${text}${ANSI_RESET}`;
+}
+
+/** Build a single colored field: "28/m" or "2.9k/mo". */
+function coloredField(remaining: string | undefined, unit: string): string | undefined {
+  if (remaining == null) return;
+  const status = windowStatus(remaining, undefined);
+  return colorize(`${formatRemaining(remaining)}/${unit}`, status);
 }
 
 // ── Widget rendering ──────────────────────────────────────────────────────
 
 function buildWidgetLines(): string[] {
   const fields = [
-    formatField(limits.minute.remaining, "m"),
-    formatField(limits.hour.remaining, "h"),
-    formatField(limits.day.remaining, "d"),
-    formatField(limits.month.remaining, "mo"),
+    coloredField(limits.minute.remaining, "m"),
+    coloredField(limits.hour.remaining, "h"),
+    coloredField(limits.day.remaining, "d"),
+    coloredField(limits.month.remaining, "mo"),
   ].filter(Boolean);
 
   if (fields.length === 0) {
     return ["fetching SAIA rate limits…"];
   }
 
-  const status = quotaStatus();
-
   if (!detailedView) {
-    const line = fields.join(" · ");
-    return [colorize(line, status)];
+    return [fields.join(" · ")];
   }
 
   // ── Detailed view ──
-  const windows: Array<[string, string | undefined]> = [
-    ["minute", limits.minute.remaining],
-    ["hour", limits.hour.remaining],
-    ["day", limits.day.remaining],
-    ["month", limits.month.remaining],
+  const windows: Array<[string, string | undefined, string | undefined]> = [
+    ["minute", limits.minute.remaining, limits.minute.limit],
+    ["hour", limits.hour.remaining, limits.hour.limit],
+    ["day", limits.day.remaining, limits.day.limit],
+    ["month", limits.month.remaining, limits.month.limit],
   ];
 
-  const rows: string[] = [colorize("SAIA rate limits", status)];
-  for (const [name, remaining] of windows) {
+  const rows: string[] = ["SAIA rate limits"];
+  for (const [name, remaining, limit] of windows) {
     if (remaining == null) continue;
-    const limit = limits[name as keyof SaiaLimits].limit;
     const rem = formatRemaining(remaining);
     const lim = limit ? formatRemaining(limit) : undefined;
+    const status = windowStatus(remaining, limit);
     const line = lim
       ? `  ${name.padEnd(6)} ${rem} / ${lim} remaining`
       : `  ${name.padEnd(6)} ${rem} remaining`;
