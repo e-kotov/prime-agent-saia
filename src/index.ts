@@ -25,8 +25,8 @@ let limits: SaiaLimits = { minute: {}, hour: {}, day: {}, month: {} };
 let resetSeconds: string | undefined;
 let detailedView = false;
 let lastWidgetLines: string[] | null = null; // change detection
-let turnStartTimestamp = 0; // from turn_start event (Unix ms)
-let lastTokensPerSec = 0;   // tokens/sec from latest response
+let streamStartTimestamp = 0; // from after_provider_response (ms)
+let lastTokensPerSec = 0;     // tokens/sec from latest response
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -254,9 +254,11 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── 3. Track response timing for tokens/sec ──
-  pi.on("turn_start", (_event, _ctx) => {
-    turnStartTimestamp = Date.now();
+  // ── 3. Track response streaming speed ──
+  // Timer starts when SAIA's response headers arrive (actual streaming start),
+  // not at turn_start (which includes context building & tool execution).
+  pi.on("after_provider_response", (_event, _ctx) => {
+    streamStartTimestamp = Date.now();
   });
 
   pi.on("message_end", (event, ctx) => {
@@ -265,13 +267,10 @@ export default function (pi: ExtensionAPI) {
       if (msg?.role !== "assistant") return;
       const outputTokens = msg?.usage?.output ?? 0;
       if (outputTokens <= 0) return;
-      if (turnStartTimestamp <= 0) return;
-      const elapsedMs = Date.now() - turnStartTimestamp;
+      if (streamStartTimestamp <= 0) return;
+      const elapsedMs = Date.now() - streamStartTimestamp;
       if (elapsedMs <= 0) return;
-      const raw = Math.round((outputTokens / elapsedMs) * 1000);
-      // Sanity cap: values over 500 T/s are usually bogus (e.g. cached
-      // responses, timing glitches, or thinking tokens counted before display).
-      lastTokensPerSec = raw > 500 ? 0 : raw;
+      lastTokensPerSec = Math.round((outputTokens / elapsedMs) * 1000);
       if (lastTokensPerSec > 0) showRateLimits(ctx);
     } catch (err) {
       console.warn(`[prime-agent-saia] message_end error: ${err instanceof Error ? err.message : String(err)}`);
