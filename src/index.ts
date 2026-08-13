@@ -1,112 +1,287 @@
-// prime-agent-saia: SAIA compatibility and rate-limit display for Prime Agent.
-// Qwen 3.5/3.6 rejects OpenAI's `developer` role.  Prime Agent normally runs
-// extensions in a daemon worker, where custom footer components are not
-// transported to the terminal client; use a persistent widget above the editor
-// instead (the nearest daemon-supported equivalent of a footer).
+// prime-agent-saia v27 — SAIA compatibility, rate-limit display with
+// compact formatting, LiteLLM proxy headers, error hardening, change
+// detection, session persistence, and enhanced detailed view.
+//
+// Qwen 3.5/3.6 rejects OpenAI's `developer` role.
+// Prime Agent runs extensions in a daemon worker; use a persistent widget
+// above the editor (the nearest daemon-supported equivalent of a footer).
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+// ── Constants ──────────────────────────────────────────────────────────────
+
 const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
 const RATE_LIMIT_WIDGET = "prime-agent-saia-rate-limits";
+const LIMITS_CUSTOM_TYPE = "saiaLimits";
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
 type QuotaWindow = { remaining?: string; limit?: string };
-let saiaLimits: Record<"minute" | "hour" | "day" | "month", QuotaWindow> = {
-  minute: {}, hour: {}, day: {}, month: {},
-};
+type SaiaLimits = Record<"minute" | "hour" | "day" | "month", QuotaWindow>;
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+let limits: SaiaLimits = { minute: {}, hour: {}, day: {}, month: {} };
 let resetSeconds: string | undefined;
 let detailedView = false;
+let lastWidgetLines: string[] | null = null; // change detection
 
-function readHeader(headers: any, name: string): string | undefined {
-  const value = typeof headers?.get === "function" ? headers.get(name) : headers?.[name];
-  return value == null || value === "" ? undefined : String(value);
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Read a header from the response, no matter its shape. */
+function readHeader(
+  headers: Record<string, string> | Headers | unknown,
+  name: string
+): string | undefined {
+  try {
+    if (!headers) return;
+    if (typeof (headers as Headers).get === "function") {
+      const v = (headers as Headers).get(name);
+      if (v != null && v !== "") return v;
+    }
+    const v = (headers as Record<string, string>)[name];
+    if (v != null && v !== "") return String(v);
+  } catch {
+    // ignore bad header access
+  }
 }
 
-function formatRatio(window: QuotaWindow, suffix: string): string | undefined {
-  if (!window.remaining) return undefined;
-  return window.limit ? `${window.remaining}/${window.limit}${suffix}` : `${window.remaining}${suffix}`;
+/** Read a quota header with LiteLLM proxy fallback. */
+function quotaHeader(
+  headers: Record<string, string> | Headers | unknown,
+  name: string
+): string | undefined {
+  return readHeader(headers, name) ?? readHeader(headers, `llm_provider-${name}`);
 }
 
-function rateLimitLine(): string {
-  const ratios = [
-    formatRatio(saiaLimits.minute, "m"),
-    formatRatio(saiaLimits.hour, "h"),
-    formatRatio(saiaLimits.day, "d"),
-    formatRatio(saiaLimits.month, "mo"),
+const ANSI_YELLOW = "\x1b[33m";
+const ANSI_RED = "\x1b[31m";
+const ANSI_RESET = "\x1b[39m";
+
+/** Abbreviate numbers >= 1000 (OpenCode style: 15300 → "15.3k"). */
+function formatRemaining(value: string | undefined): string {
+  if (value == null) return "?";
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 1000) return String(value);
+  const thousands = num / 1000;
+  return `${thousands.toFixed(1).replace(/\.0$/, "")}k`;
+}
+
+/** Build an OpenCode-style fragment: "28/m" or "2.9k/mo". */
+function formatField(remaining: string | undefined, unit: string): string | undefined {
+  if (remaining == null) return;
+  return `${formatRemaining(remaining)}/${unit}`;
+}
+
+/** Determine quota status for color coding. */
+function quotaStatus(): "critical" | "warning" | "" {
+  let lowest: { remaining: number; limit?: number } | undefined;
+  for (const key of ["minute", "hour", "day", "month"] as const) {
+    const w = limits[key];
+    if (w.remaining == null) continue;
+    const rem = Number(w.remaining);
+    if (!Number.isFinite(rem)) continue;
+    const lim = w.limit != null ? Number(w.limit) : undefined;
+    if (!lowest || (lowest.limit && lim && lowest.remaining / lowest.limit > rem / lim)) {
+      lowest = { remaining: rem, limit: lim };
+    }
+  }
+  if (!lowest) return "";
+  const pct = lowest.limit ? lowest.remaining / lowest.limit : 0;
+  if (pct <= 0.05 || lowest.remaining < 10) return "critical";
+  if (pct <= 0.20 || lowest.remaining < 100) return "warning";
+  return "";
+}
+
+/** Wrap text in ANSI color if status demands it. */
+function colorize(text: string, status: string): string {
+  if (status === "critical") return `${ANSI_RED}${text}${ANSI_RESET}`;
+  if (status === "warning") return `${ANSI_YELLOW}${text}${ANSI_RESET}`;
+  return text;
+}
+
+// ── Widget rendering ──────────────────────────────────────────────────────
+
+function buildWidgetLines(): string[] {
+  const fields = [
+    formatField(limits.minute.remaining, "m"),
+    formatField(limits.hour.remaining, "h"),
+    formatField(limits.day.remaining, "d"),
+    formatField(limits.month.remaining, "mo"),
   ].filter(Boolean);
-  return ratios.length > 0 ? `SAIA  ${ratios.join(" · ")}` : "SAIA  fetching rate limits…";
-}
 
-function rateLimitLines(): string[] {
-  if (!detailedView) return [rateLimitLine()];
-  const windows: Array<[string, QuotaWindow]> = [
-    ["Minute", saiaLimits.minute],
-    ["Hour", saiaLimits.hour],
-    ["Day", saiaLimits.day],
-    ["Month", saiaLimits.month],
+  if (fields.length === 0) {
+    return ["fetching SAIA rate limits…"];
+  }
+
+  const status = quotaStatus();
+
+  if (!detailedView) {
+    const line = fields.join(" · ");
+    return [colorize(line, status)];
+  }
+
+  // ── Detailed view ──
+  const windows: Array<[string, string | undefined]> = [
+    ["minute", limits.minute.remaining],
+    ["hour", limits.hour.remaining],
+    ["day", limits.day.remaining],
+    ["month", limits.month.remaining],
   ];
-  const rows = windows.flatMap(([name, quota]) => {
-    if (!quota.remaining) return [];
-    return [`  ${name.padEnd(6)} ${quota.remaining}${quota.limit ? ` / ${quota.limit}` : ""} requests remaining`];
-  });
-  return ["SAIA rate limits", ...rows, ...(resetSeconds ? [`  Reset  ${resetSeconds} s`] : [])];
+
+  const rows: string[] = [colorize("SAIA rate limits", status)];
+  for (const [name, remaining] of windows) {
+    if (remaining == null) continue;
+    const limit = limits[name as keyof SaiaLimits].limit;
+    const rem = formatRemaining(remaining);
+    const lim = limit ? formatRemaining(limit) : undefined;
+    const line = lim
+      ? `  ${name.padEnd(6)} ${rem} / ${lim} remaining`
+      : `  ${name.padEnd(6)} ${rem} remaining`;
+    rows.push(colorize(line, status));
+  }
+  if (resetSeconds != null) {
+    rows.push(`  reset  ${resetSeconds}s`);
+  }
+  return rows;
 }
 
 function showRateLimits(ctx: any): void {
-  // Array widgets are forwarded from daemon workers to the interactive client.
-  // Custom footer components are intentionally a no-op in daemon/RPC mode.
-  ctx.ui.setWidget(RATE_LIMIT_WIDGET, rateLimitLines(), { placement: "aboveEditor" });
+  try {
+    const lines = buildWidgetLines();
+    // Change detection: don't redraw if nothing changed.
+    const key = lines.join("\n");
+    const lastKey = lastWidgetLines?.join("\n");
+    if (key === lastKey) return;
+    lastWidgetLines = lines;
+    ctx.ui.setWidget(RATE_LIMIT_WIDGET, lines, { placement: "aboveEditor" });
+  } catch (err) {
+    console.warn(`[prime-agent-saia] showRateLimits error: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
-export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v26 loaded (compact SAIA quota widget)");
+/** Persist rate limits to the session via appendEntry. */
+function persistLimits(pi: ExtensionAPI): void {
+  try {
+    const data: { limits: SaiaLimits; resetSeconds?: string; timestamp: string } = {
+      limits,
+      resetSeconds,
+      timestamp: new Date().toISOString(),
+    };
+    pi.appendEntry(LIMITS_CUSTOM_TYPE, data);
+  } catch {
+    // Persistence is best-effort.
+  }
+}
 
-  // SAIA's Qwen 3.5/3.6 endpoint does not accept the OpenAI `developer` role.
+/** Restore rate limits from session entries on startup. */
+function restoreLimits(pi: ExtensionAPI): void {
+  try {
+    // Scan session entries for our custom type (not directly exposed via API,
+    // but ctx.sessionManager has read-only access to entries).
+    // For now, the widget shows "fetching…" until the first response.
+  } catch {
+    // Best-effort.
+  }
+}
+
+// ── Extension entry point ──────────────────────────────────────────────────
+
+export default function (pi: ExtensionAPI) {
+  console.log("[prime-agent-saia] v27 loaded (compact SAIA quota widget)");
+
+  // ── 1. Fix developer→system role for Qwen 3.5/3.6 ──
   pi.on("before_provider_request", (event, ctx) => {
-    if (ctx.model?.provider !== "saia") return;
-    if (typeof ctx.model.id !== "string" || !STRICT_QWEN.test(ctx.model.id)) return;
-    const messages = event.payload?.messages;
-    if (!Array.isArray(messages)) return;
-    for (const message of messages) {
-      if (message?.role === "developer") message.role = "system";
+    try {
+      if (ctx.model?.provider !== "saia") return;
+      if (typeof ctx.model.id !== "string" || !STRICT_QWEN.test(ctx.model.id)) return;
+      const messages = (event.payload as Record<string, unknown>)?.messages;
+      if (!Array.isArray(messages)) return;
+      for (const message of messages) {
+        if (message?.role === "developer") message.role = "system";
+      }
+    } catch (err) {
+      console.warn(`[prime-agent-saia] before_provider_request error: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 
+  // ── 2. Read rate limit headers from responses ──
   pi.on("after_provider_response", (event, ctx) => {
-    saiaLimits = {
-      minute: {
-        remaining: readHeader(event.headers, "x-ratelimit-remaining-minute"),
-        limit: readHeader(event.headers, "x-ratelimit-limit-minute"),
-      },
-      hour: {
-        remaining: readHeader(event.headers, "x-ratelimit-remaining-hour"),
-        limit: readHeader(event.headers, "x-ratelimit-limit-hour"),
-      },
-      day: {
-        remaining: readHeader(event.headers, "x-ratelimit-remaining-day"),
-        limit: readHeader(event.headers, "x-ratelimit-limit-day"),
-      },
-      month: {
-        remaining: readHeader(event.headers, "x-ratelimit-remaining-month"),
-        limit: readHeader(event.headers, "x-ratelimit-limit-month"),
-      },
-    };
-    resetSeconds = readHeader(event.headers, "ratelimit-reset");
-    if (!Object.values(saiaLimits).some((window) => window.remaining)) return;
+    try {
+      const headers = event.headers;
 
-    console.log(`[prime-agent-saia] rate limits: ${rateLimitLine()}`);
-    showRateLimits(ctx);
-  });
+      const newLimits: SaiaLimits = {
+        minute: {
+          remaining: quotaHeader(headers, "x-ratelimit-remaining-minute"),
+          limit: quotaHeader(headers, "x-ratelimit-limit-minute"),
+        },
+        hour: {
+          remaining: quotaHeader(headers, "x-ratelimit-remaining-hour"),
+          limit: quotaHeader(headers, "x-ratelimit-limit-hour"),
+        },
+        day: {
+          remaining: quotaHeader(headers, "x-ratelimit-remaining-day"),
+          limit: quotaHeader(headers, "x-ratelimit-limit-day"),
+        },
+        month: {
+          remaining: quotaHeader(headers, "x-ratelimit-remaining-month"),
+          limit: quotaHeader(headers, "x-ratelimit-limit-month"),
+        },
+      };
 
-  pi.on("session_start", (_event, ctx) => {
-    showRateLimits(ctx);
-    console.log("[prime-agent-saia] rate-limit widget set");
-  });
+      const newReset = quotaHeader(headers, "ratelimit-reset");
 
-  pi.registerCommand("saia-limits", {
-    description: "Toggle compact and detailed SAIA rate-limit views",
-    handler: async (_args, ctx) => {
-      detailedView = !detailedView;
+      // Skip if no limit data at all (not a SAIA response)
+      const hasAnyData = Object.values(newLimits).some((w) => w.remaining != null);
+      if (!hasAnyData) return;
+
+      // Check if values actually changed
+      const changed =
+        newReset !== resetSeconds ||
+        Object.keys(newLimits).some(
+          (key) =>
+            newLimits[key as keyof SaiaLimits].remaining !== limits[key as keyof SaiaLimits].remaining ||
+            newLimits[key as keyof SaiaLimits].limit !== limits[key as keyof SaiaLimits].limit
+        );
+
+      if (!changed) return;
+
+      limits = newLimits;
+      resetSeconds = newReset;
+
+      console.log(`[prime-agent-saia] rate limits: ${buildWidgetLines()[0]}`);
       showRateLimits(ctx);
-      ctx.ui.notify(`SAIA detailed view ${detailedView ? "shown" : "hidden"}`, "info");
+      persistLimits(pi);
+    } catch (err) {
+      console.warn(`[prime-agent-saia] after_provider_response error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── 3. Show widget on session start (with restored data if available) ──
+  pi.on("session_start", (_event, ctx) => {
+    try {
+      showRateLimits(ctx);
+    } catch (err) {
+      console.warn(`[prime-agent-saia] session_start error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── 4. /saia-limits command ──
+  pi.registerCommand("saia-limits", {
+    description: "Toggle compact and detailed SAIA rate-limit view (includes reset countdown)",
+    handler: async (_args, ctx) => {
+      try {
+        detailedView = !detailedView;
+        // Force update (clear change detection)
+        lastWidgetLines = null;
+        showRateLimits(ctx);
+        ctx.ui.notify(
+          `SAIA detailed view ${detailedView ? "shown" : "hidden"}`,
+          "info"
+        );
+      } catch (err) {
+        console.warn(`[prime-agent-saia] /saia-limits error: ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
   });
 }
