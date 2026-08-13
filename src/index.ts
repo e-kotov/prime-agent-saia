@@ -25,6 +25,8 @@ let limits: SaiaLimits = { minute: {}, hour: {}, day: {}, month: {} };
 let resetSeconds: string | undefined;
 let detailedView = false;
 let lastWidgetLines: string[] | null = null; // change detection
+let turnStartTimestamp = 0; // from turn_start event (Unix ms)
+let lastTokensPerSec = 0;   // tokens/sec from latest response
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -109,7 +111,8 @@ function buildWidgetLines(): string[] {
   }
 
   if (!detailedView) {
-    return [fields.join(" · ")];
+    const main = fields.join(" · ");
+    return [lastTokensPerSec > 0 ? `${main} · ${lastTokensPerSec} T/s` : main];
   }
 
   // ── Detailed view ──
@@ -133,6 +136,9 @@ function buildWidgetLines(): string[] {
   }
   if (resetSeconds != null) {
     rows.push(`  reset  ${resetSeconds}s`);
+  }
+  if (lastTokensPerSec > 0) {
+    rows.push(`  speed  ${lastTokensPerSec} T/s`);
   }
   return rows;
 }
@@ -248,7 +254,29 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── 3. Show widget on session start (with restored data if available) ──
+  // ── 3. Track response timing for tokens/sec ──
+  pi.on("turn_start", (event, _ctx) => {
+    turnStartTimestamp = (event as any).timestamp ?? Date.now();
+  });
+
+  pi.on("message_end", (event, ctx) => {
+    try {
+      const msg = (event as any).message;
+      if (msg?.role !== "assistant") return;
+      const usage = msg.usage;
+      const outputTokens = usage?.output ?? 0;
+      if (outputTokens <= 0) return;
+      if (turnStartTimestamp <= 0) return;
+      const elapsedMs = (msg.timestamp ?? Date.now()) - turnStartTimestamp;
+      if (elapsedMs <= 0) return;
+      lastTokensPerSec = Math.round((outputTokens / elapsedMs) * 1000);
+      showRateLimits(ctx);
+    } catch (err) {
+      console.warn(`[prime-agent-saia] message_end error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── 4. Show widget on session start (with restored data if available) ──
   pi.on("session_start", (_event, ctx) => {
     try {
       showRateLimits(ctx);
