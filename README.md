@@ -1,41 +1,78 @@
 # prime-agent-saia
 
-Prime Agent extensions for SAIA (GWDG Chat AI) models.
+Prime Agent extensions for SAIA (GWDG Chat AI) models —
+rate-limit display, model compatibility fixes, and more.
 
-## Current extensions
+## Features
 
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Rewrites `developer` to `system` for SAIA Qwen 3.5/3.6 and shows SAIA response rate limits above the editor. |
+| Feature | Description |
+|---------|-------------|
+| **Rate limit display** | Shows SAIA API quotas above the editor — compact one-line or detailed view |
+| **Color coding** | Green (plenty), yellow (warning), red (critical) — each counter independently |
+| **LiteLLM proxy support** | Falls back to `llm_provider-*` headers when behind a proxy |
+| **Qwen 3.5/3.6 fix** | Rewrites OpenAI `developer` role to `system` (required by SAIA's deployments) |
+
+## Quick install
+
+```bash
+# From the checked-out repo:
+bash install.sh
+```
+
+Restart Prime Agent or run `/reload` to activate.
+
+### Manual install
+
+```bash
+ln -sf "$PWD/src/index.ts" ~/.prime/agent/extensions/saia.ts
+```
+
+### Uninstall
+
+```bash
+rm -f ~/.prime/agent/extensions/saia.ts
+```
+
+## Usage
+
+The extension activates automatically when using a SAIA model.
+
+- **Compact view** (default): `28/m · 146/h · 928/d · 3k/mo` shown above the editor
+- **Detailed view**: Run `/saia-limits` to toggle detailed view with labels, limit totals, and reset countdown
+
+Each counter is color-coded by how much quota remains:
+- 🟢 Green — plenty
+- 🟡 Yellow — less than 20% or fewer than 100 requests
+- 🔴 Red — less than 5% or fewer than 10 requests
 
 ## How it works
 
 SAIA's Qwen 3.5 and Qwen 3.6 endpoints reject the OpenAI `developer` message
-role. The extension changes only that role to `system` for matching SAIA models.
+role. The extension changes that role to `system` for matching SAIA models.
 
 Prime Agent sessions run extensions in a daemon worker. In that mode the
 `setFooter()` component API is deliberately a no-op and cannot reach the
-terminal client. `setWidget(..., { placement: "aboveEditor" })` is forwarded,
-so all remaining/total quota headers are displayed compactly above the editor,
-for example: `SAIA 9/10m · 199/200h · 399/400d · 2999/3000mo`.
-Run `/saia-limits` to toggle a four-line detailed view, including the reset
-countdown when SAIA supplies it.
+terminal client. `setWidget()` with `placement: "aboveEditor"` is forwarded,
+so rate-limit headers are displayed compactly above the editor.
 
-## Installation
-
-```bash
-# Symlink the extension so Prime Agent discovers it
-ln -sf "$PWD/src/index.ts" ~/.prime/agent/extensions/saia.ts
-```
-
-Restart Prime Agent (or use `/reload`). The extension activates automatically
-when a SAIA Qwen 3.5/3.6 model is in use.
+Rate limits are read from `x-ratelimit-remaining-*` response headers (with
+`llm_provider-*` fallback for LiteLLM proxy setups). Each response updates
+the widget above the editor. Limits are persisted to session entries for
+survival across reloads.
 
 ## Development
 
-Add new `.ts` files in `src/`. To register multiple entry points, create
-separate symlinks in `~/.prime/agent/extensions/`.
+```bash
+git clone ssh://gwdg/user/egor.kotov/u14190/software/prime-agent-saia
+# or
+git clone git@github.com:e-kotov/prime-agent-saia.git
 
-For extensions that need npm dependencies, add a `package.json` here and run
-`npm install`. Prime Agent resolves `node_modules/` imports automatically when
-the extension file is inside a directory with `package.json`.
+cd prime-agent-saia
+bash install.sh
+
+# Edit src/index.ts, then /reload in Prime Agent to test
+```
+
+To add npm dependencies, run `npm install <pkg>` in the repo root. Prime Agent
+resolves `node_modules/` imports automatically when the extension file is
+inside a directory with `package.json`.
