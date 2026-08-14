@@ -10,7 +10,7 @@ rate-limit display, model compatibility fixes, and more.
 | **Rate limit display** | Shows SAIA API quotas above the editor — compact one-line or detailed view |
 | **Color coding** | Green (plenty), yellow (warning), red (critical) — each counter independently |
 | **LiteLLM proxy support** | Falls back to `llm_provider-*` headers when behind a proxy |
-| **Qwen 3.5/3.6 fix** | Rewrites OpenAI `developer` role to `system` (required by SAIA's deployments) |
+| **Qwen 3.x fix** | Rewrites OpenAI `developer` role to `system` (required by SAIA's deployments) |
 
 ## Quick install
 
@@ -47,7 +47,7 @@ Each counter is color-coded by how much quota remains:
 
 ## How it works
 
-SAIA's Qwen 3.5 and Qwen 3.6 endpoints reject the OpenAI `developer` message
+SAIA's Qwen 3.x endpoints reject the OpenAI `developer` message
 role. The extension changes that role to `system` for matching SAIA models.
 
 Prime Agent sessions run extensions in a daemon worker. In that mode the

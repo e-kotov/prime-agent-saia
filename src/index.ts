@@ -2,7 +2,7 @@
 // compact formatting, LiteLLM proxy headers, error hardening, change
 // detection, session persistence, and enhanced detailed view.
 //
-// Qwen 3.5/3.6 rejects OpenAI's `developer` role.
+// Qwen 3.x rejects OpenAI's `developer` role.
 // Prime Agent runs extensions in a daemon worker; use a persistent widget
 // above the editor (the nearest daemon-supported equivalent of a footer).
 
@@ -10,7 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const STRICT_QWEN = /^qwen3[.:](?:5|6)/;
+const STRICT_QWEN = /^qwen3/;
 const RATE_LIMIT_WIDGET = "prime-agent-saia-rate-limits";
 const LIMITS_CUSTOM_TYPE = "saiaLimits";
 
@@ -187,7 +187,7 @@ function restoreLimits(pi: ExtensionAPI): void {
 export default function (pi: ExtensionAPI) {
   console.log("[prime-agent-saia] v27 loaded (compact SAIA quota widget)");
 
-  // ── 1. Fix developer→system role for Qwen 3.5/3.6 ──
+  // ── 1. Fix developer→system role for Qwen 3.x ──
   pi.on("before_provider_request", (event, ctx) => {
     try {
       if (ctx.model?.provider !== "saia") return;
