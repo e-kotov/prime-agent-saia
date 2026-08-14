@@ -14,18 +14,13 @@ rate-limit display, model compatibility fixes, and more.
 
 ## Quick install
 
+You can install or update the extension with a single command:
+
 ```bash
-# From the checked-out repo:
-bash install.sh
+curl -sSL https://raw.githubusercontent.com/e-kotov/prime-agent-saia/main/src/index.ts --create-dirs -o ~/.prime/agent/extensions/saia.ts
 ```
 
 Restart Prime Agent or run `/reload` to activate.
-
-### Manual install
-
-```bash
-ln -sf "$PWD/src/index.ts" ~/.prime/agent/extensions/saia.ts
-```
 
 ### Uninstall
 
