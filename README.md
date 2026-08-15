@@ -10,6 +10,7 @@ rate-limit display, model compatibility fixes, and more.
 | **Rate limit display** | Shows SAIA API quotas above the editor — compact one-line or detailed view |
 | **Color coding** | Green (plenty), yellow (warning), red (critical) — each counter independently |
 | **LiteLLM proxy support** | Falls back to `llm_provider-*` headers when behind a proxy |
+| **Provider isolation** | Shows and updates its widget only for active SAIA responses; clears it on other providers |
 | **Qwen 3.x fix** | Rewrites OpenAI `developer` role to `system` (required by SAIA's deployments) |
 
 ## Quick install

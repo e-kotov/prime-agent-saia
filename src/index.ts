@@ -1,4 +1,4 @@
-// prime-agent-saia v27 — SAIA compatibility, rate-limit display with
+// prime-agent-saia v28 — SAIA compatibility, rate-limit display with
 // compact formatting, LiteLLM proxy headers, error hardening, change
 // detection, session persistence, and enhanced detailed view.
 //
@@ -157,6 +157,15 @@ function showRateLimits(ctx: any): void {
   }
 }
 
+function isSaia(ctx: any): boolean {
+  return ctx?.model?.provider === "saia";
+}
+
+function clearRateLimits(ctx: any): void {
+  lastWidgetLines = null;
+  ctx.ui.setWidget(RATE_LIMIT_WIDGET, undefined, { placement: "aboveEditor" });
+}
+
 /** Persist rate limits to the session via appendEntry. */
 function persistLimits(pi: ExtensionAPI): void {
   try {
@@ -185,7 +194,7 @@ function restoreLimits(pi: ExtensionAPI): void {
 // ── Extension entry point ──────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  console.log("[prime-agent-saia] v27 loaded (compact SAIA quota widget)");
+  console.log("[prime-agent-saia] v28 loaded (provider-isolated SAIA quota widget)");
 
   // ── 1. Fix developer→system role for Qwen 3.x ──
   pi.on("before_provider_request", (event, ctx) => {
@@ -205,6 +214,7 @@ export default function (pi: ExtensionAPI) {
   // ── 2. Read rate limit headers from responses ──
   pi.on("after_provider_response", (event, ctx) => {
     try {
+      if (!ctx.hasUI || !isSaia(ctx)) return;
       const headers = event.headers;
 
       const newLimits: SaiaLimits = {
@@ -257,14 +267,16 @@ export default function (pi: ExtensionAPI) {
   // ── 3. Track response streaming speed ──
   // Timer starts when SAIA's response headers arrive (actual streaming start),
   // not at turn_start (which includes context building & tool execution).
-  pi.on("after_provider_response", (_event, _ctx) => {
+  pi.on("after_provider_response", (_event, ctx) => {
+    if (!ctx.hasUI || !isSaia(ctx)) return;
     streamStartTimestamp = Date.now();
   });
 
   pi.on("message_end", (event, ctx) => {
     try {
+      if (!ctx.hasUI || !isSaia(ctx)) return;
       const msg = (event as any).message;
-      if (msg?.role !== "assistant") return;
+      if (msg?.role !== "assistant" || msg?.provider !== "saia") return;
       const outputTokens = msg?.usage?.output ?? 0;
       if (outputTokens <= 0) return;
       if (streamStartTimestamp <= 0) return;
@@ -277,20 +289,44 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── 4. Show widget on session start (with restored data if available) ──
+  // ── 4. Show the widget only for an active SAIA model ──
   pi.on("session_start", (_event, ctx) => {
     try {
+      if (!ctx.hasUI) return;
+      if (!isSaia(ctx)) return clearRateLimits(ctx);
       showRateLimits(ctx);
     } catch (err) {
       console.warn(`[prime-agent-saia] session_start error: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 
-  // ── 4. /saia-limits command ──
+  pi.on("model_select", (_event, ctx) => {
+    try {
+      if (!ctx.hasUI) return;
+      if (!isSaia(ctx)) {
+        streamStartTimestamp = 0;
+        lastTokensPerSec = 0;
+        return clearRateLimits(ctx);
+      }
+      lastWidgetLines = null;
+      showRateLimits(ctx);
+    } catch (err) {
+      console.warn(`[prime-agent-saia] model_select error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── 5. /saia-limits command ──
   pi.registerCommand("saia-limits", {
     description: "Toggle compact and detailed SAIA rate-limit view (includes reset countdown)",
     handler: async (_args, ctx) => {
       try {
+        if (!ctx.hasUI || !isSaia(ctx)) {
+          if (ctx.hasUI) {
+            clearRateLimits(ctx);
+            ctx.ui.notify("SAIA rate limits are available only for an active SAIA model", "info");
+          }
+          return;
+        }
         detailedView = !detailedView;
         // Force update (clear change detection)
         lastWidgetLines = null;
