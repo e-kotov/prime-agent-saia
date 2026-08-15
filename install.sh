@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # prime-agent-saia installer
-# Creates a symlink so Prime Agent discovers the SAIA extension.
+# Installs a regular extension file so the active Prime configuration does not
+# depend on this working-tree path remaining available.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE="$SCRIPT_DIR/src/index.ts"
@@ -16,8 +17,8 @@ if [ -f "$TARGET" ] || [ -L "$TARGET" ]; then
   rm -f "$TARGET"
 fi
 
-ln -sf "$SOURCE" "$TARGET"
-echo "✓ Symlinked $TARGET -> $SOURCE"
+install -m 0644 "$SOURCE" "$TARGET"
+echo "✓ Installed regular file $TARGET from $SOURCE"
 echo ""
 echo "  Restart Prime Agent or run /reload to activate."
 echo "  The extension activates automatically when using a SAIA model."
