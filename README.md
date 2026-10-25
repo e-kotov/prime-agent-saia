@@ -3,6 +3,8 @@
 Prime Agent extensions for SAIA (GWDG Chat AI) models —
 rate-limit display, model compatibility fixes, and more.
 
+See [CHANGELOG.md](CHANGELOG.md) for recent changes.
+
 ## Features
 
 | Feature | Description |
